@@ -10,15 +10,14 @@ from scipy.stats import pearsonr
 import os
 from tqdm import tqdm
 
-# Set device
+
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-# Model & Tokenizer
 MODEL_NAME = "xlm-roberta-base"
 tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
 bert = AutoModel.from_pretrained(MODEL_NAME)
 
-# Configuration
+# parameters
 MAX_LENGTH = 128
 BATCH_SIZE = 16
 EPOCHS = 3
@@ -26,7 +25,7 @@ LR = 2e-5
 NUM_LABELS = 6
 LABEL_COLUMNS = ['anger', 'disgust', 'fear', 'joy', 'sadness', 'surprise']
 
-# Dataset Class
+
 class EmotionDataset(Dataset):
     def __init__(self, dataframe):
         self.texts = dataframe["text"].tolist()
@@ -41,7 +40,7 @@ class EmotionDataset(Dataset):
         item["labels"] = torch.tensor(self.labels[idx])
         return item
 
-# Model Definition
+# model definition
 class EmotionModel(nn.Module):
     def __init__(self):
         super(EmotionModel, self).__init__()
@@ -56,7 +55,27 @@ class EmotionModel(nn.Module):
         x = self.classifier(x)
         return x
 
-# Evaluation Metric
+# handle multiple language .csv files
+def load_multilingual_data(folder_path, filter_lang=None):
+    dfs = []
+    for file in os.listdir(folder_path):
+        if file.endswith(".csv"):
+            lang_code = file.split(".")[0]
+            if filter_lang is None or lang_code == filter_lang:
+                df = pd.read_csv(os.path.join(folder_path, file))
+                df["lang"] = lang_code
+
+                # ensure all emotion annotations are present. if not present it means emotion is 0
+                for col in LABEL_COLUMNS:
+                    if col not in df.columns:
+                        df[col] = 0.0
+
+                dfs.append(df)
+
+    return pd.concat(dfs, ignore_index=True) if dfs else pd.DataFrame()
+
+
+# evaluation Metric
 def pearson_score(preds, labels):
     scores = []
     for i in range(NUM_LABELS):
@@ -110,15 +129,37 @@ def train_model(train_df, test_df):
     all_preds = np.vstack(all_preds)
     all_labels = np.vstack(all_labels)
 
+    # Threshold predictions at 0.5 for classification metrics
+    thresholded_preds = (all_preds >= 0.5).astype(int)
+    thresholded_labels = (all_labels >= 0.5).astype(int)
+
+    macro_f1 = f1_score(thresholded_labels, thresholded_preds, average='macro')
+
     mse = mean_squared_error(all_labels, all_preds)
     pearson = pearson_score(all_preds, all_labels)
 
     print("Test MSE:", mse)
     print("Test Pearson r:", pearson)
+    print("Macro F1 (threshold=0.5):", macro_f1)
 
-# Entry point
+
+
 if __name__ == "__main__":
-    # Replace these with actual CSV paths
-    train_df = pd.read_csv("data/train.csv")
-    test_df = pd.read_csv("data/test.csv")
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    train_path = os.path.join(base_dir, "task-dataset", "semeval-2025-task11-dataset", "track_b", "train")
+    test_path = os.path.join(base_dir, "task-dataset", "semeval-2025-task11-dataset", "track_b", "test")
+
+    # modify language to test different multi-language combinations
+    train_lang = "eng"
+    test_lang = "rus"
+
+    print(f"Training on: {train_lang}")
+    print(f"Testing on: {test_lang}")
+
+    train_df = load_multilingual_data(train_path, filter_lang=train_lang)
+    test_df = load_multilingual_data(test_path, filter_lang=test_lang)
+
+    print(f"Loaded {len(train_df)} training samples")
+    print(f"Loaded {len(test_df)} test samples")
+
     train_model(train_df, test_df)
