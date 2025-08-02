@@ -5,6 +5,7 @@ from torch.utils.data import Dataset, DataLoader
 from transformers import AutoTokenizer, AutoModel
 import pandas as pd
 import numpy as np
+import matplotlib.pyplot as plt
 from sklearn.metrics import mean_squared_error, classification_report, f1_score, precision_score, recall_score
 from scipy.stats import pearsonr
 import os
@@ -83,7 +84,7 @@ def pearson_score(preds, labels):
         scores.append(r)
     return np.mean(scores)
 
-# Train and Evaluate
+# train and evaluate model
 def train_model(train_df, test_df):
     train_dataset = EmotionDataset(train_df)
     test_dataset = EmotionDataset(test_df)
@@ -97,8 +98,8 @@ def train_model(train_df, test_df):
 
     for epoch in range(EPOCHS):
         model.train()
-        total_loss = 0
-        for batch in tqdm(train_loader):
+        total_loss = 0.0
+        for batch in tqdm(train_loader, desc=f"Epoch {epoch+1}"):
             input_ids = batch["input_ids"].to(device)
             attention_mask = batch["attention_mask"].to(device)
             labels = batch["labels"].to(device)
@@ -108,11 +109,15 @@ def train_model(train_df, test_df):
             loss = loss_fn(outputs, labels)
             loss.backward()
             optimizer.step()
+
+            if loss.item() < 0:
+                print("negative loss, this is an issue", loss.item())
             total_loss += loss.item()
 
-        print(f"Epoch {epoch+1}, Loss: {total_loss / len(train_loader)}")
+        avg_loss = total_loss / len(train_loader)
+        print(f"Epoch {epoch+1}, Average Loss: {avg_loss:.4f}")
 
-    # Evaluation
+    # evaluate
     model.eval()
     all_preds = []
     all_labels = []
@@ -122,25 +127,45 @@ def train_model(train_df, test_df):
             attention_mask = batch["attention_mask"].to(device)
             labels = batch["labels"].cpu().numpy()
 
-            outputs = model(input_ids, attention_mask).cpu().numpy()
-            all_preds.append(outputs)
+            logits = model(input_ids, attention_mask)
+            probs = torch.sigmoid(logits).cpu().numpy() 
+            all_preds.append(probs)
             all_labels.append(labels)
 
     all_preds = np.vstack(all_preds)
     all_labels = np.vstack(all_labels)
 
-    # Threshold predictions at 0.5 for classification metrics
+    # thresholded for F1
     thresholded_preds = (all_preds >= 0.5).astype(int)
     thresholded_labels = (all_labels >= 0.5).astype(int)
+    
+    # calculate evaluation metrics for each emotion. this will let us visualize
+    per_emotion_f1 = f1_score(thresholded_labels, thresholded_preds, average=None)
+    per_emotion_precision = precision_score(thresholded_labels, thresholded_preds, average=None)
+    per_emotion_recall = recall_score(thresholded_labels, thresholded_preds, average=None)
 
-    macro_f1 = f1_score(thresholded_labels, thresholded_preds, average='macro')
+    print("Metrics for each emotion:")
+    for i, label in enumerate(LABEL_COLUMNS):
+        print(f"{label:<10} | F1: {per_emotion_f1[i]:.3f} | Precision: {per_emotion_precision[i]:.3f} | Recall: {per_emotion_recall[i]:.3f}")
+
+    # create a plot of f1 score for each emotion
+    plt.figure(figsize=(10, 5))
+    plt.bar(LABEL_COLUMNS, per_emotion_f1, color='skyblue')
+    plt.title("Per-Emotion F1 Score")
+    plt.ylabel("F1 Score")
+    plt.ylim(0, 1)
+    plt.grid(axis='y')
+    plt.tight_layout()
+    plt.show()
 
     mse = mean_squared_error(all_labels, all_preds)
     pearson = pearson_score(all_preds, all_labels)
+    macro_f1 = f1_score(thresholded_labels, thresholded_preds, average='macro')
 
-    print("Test MSE:", mse)
-    print("Test Pearson r:", pearson)
-    print("Macro F1 (threshold=0.5):", macro_f1)
+    print(f"Test MSE: {mse:.4f}")
+    print(f"Test Pearson r: {pearson:.4f}")
+    print(f"Macro F1 (threshold=0.5): {macro_f1:.4f}")
+
 
 
 
