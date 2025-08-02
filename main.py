@@ -66,14 +66,18 @@ def load_multilingual_data(folder_path, filter_lang=None):
                 df = pd.read_csv(os.path.join(folder_path, file))
                 df["lang"] = lang_code
 
-                # ensure all emotion annotations are present. if not present it means emotion is 0
+                # Ensure all emotion columns exist
                 for col in LABEL_COLUMNS:
                     if col not in df.columns:
                         df[col] = 0.0
 
+                # Normalize all labels to 0-1 range
+                df[LABEL_COLUMNS] = df[LABEL_COLUMNS].clip(0, 1)
+
                 dfs.append(df)
 
     return pd.concat(dfs, ignore_index=True) if dfs else pd.DataFrame()
+
 
 
 # evaluation Metric
@@ -104,14 +108,30 @@ def train_model(train_df, test_df):
             attention_mask = batch["attention_mask"].to(device)
             labels = batch["labels"].to(device)
 
+            # Check for invalid label values
+            if torch.any(labels < 0) or torch.any(labels > 1):
+                print("Out-of-bound label detected")
+                print("Min label value:", labels.min().item(), "Max label value:", labels.max().item())
+                print("Sample labels:", labels)
+
             optimizer.zero_grad()
             outputs = model(input_ids, attention_mask)
+
+            # Check if output is raw logits (should be, don't apply sigmoid here)
+            if torch.isnan(outputs).any():
+                print("NaN detected in outputs")
+                print("Outputs:", outputs)
+
             loss = loss_fn(outputs, labels)
+
+            # Check for negative loss
+            if loss.item() < 0:
+                print("Negative loss detected:", loss.item())
+                print("Sample outputs:", outputs[:2].detach().cpu().numpy())
+                print("Sample labels:", labels[:2].detach().cpu().numpy())
+
             loss.backward()
             optimizer.step()
-
-            if loss.item() < 0:
-                print("negative loss, this is an issue", loss.item())
             total_loss += loss.item()
 
         avg_loss = total_loss / len(train_loader)
