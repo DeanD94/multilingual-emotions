@@ -71,8 +71,8 @@ def load_multilingual_data(folder_path, filter_lang=None):
                     if col not in df.columns:
                         df[col] = 0.0
 
-                # Normalize all labels to 0-1 range
-                df[LABEL_COLUMNS] = df[LABEL_COLUMNS].clip(0, 1)
+                # normalize without clipping so we don't distort our data
+                df[LABEL_COLUMNS] = df[LABEL_COLUMNS] / 3.0
 
                 dfs.append(df)
 
@@ -155,9 +155,10 @@ def train_model(train_df, test_df):
     all_preds = np.vstack(all_preds)
     all_labels = np.vstack(all_labels)
 
-    # thresholded for F1
-    thresholded_preds = (all_preds >= 0.5).astype(int)
-    thresholded_labels = (all_labels >= 0.5).astype(int)
+    # thresholded for F1 -> lower threshold for surprise/disgust
+    thresholds = np.array([0.3, 0.4, 0.5, 0.5, 0.5, 0.3])
+    thresholded_preds = (all_preds >= thresholds).astype(int)
+    thresholded_labels = (all_labels >= thresholds).astype(int)
     
     # calculate evaluation metrics for each emotion. this will let us visualize
     per_emotion_f1 = f1_score(thresholded_labels, thresholded_preds, average=None)
@@ -207,4 +208,5 @@ if __name__ == "__main__":
     print(f"Loaded {len(train_df)} training samples")
     print(f"Loaded {len(test_df)} test samples")
 
+    print(f"Sum of column labels in test(rus): {test_df[LABEL_COLUMNS].sum()}")
     train_model(train_df, test_df)
